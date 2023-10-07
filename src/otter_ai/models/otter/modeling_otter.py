@@ -233,7 +233,7 @@ class OtterPerceiverResampler(nn.Module):
         # blocks
         latents = repeat(self.latents, "n d -> b T n d", b=b, T=T)
         for block in self.layers:
-            latents = block(x, latents)
+            latents = block(x, latents) #F*v = n1 mentioned in perceiver module
         return self.norm(latents)
 
 
