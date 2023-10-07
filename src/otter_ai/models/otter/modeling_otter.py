@@ -120,18 +120,22 @@ def exists(val):
     return val is not None
 
 
-class OtterPerceiverBlock(nn.Module):
-    def __init__(self, *, dim: int, dim_head: int = 64, heads: int = 8, mult: int = 4):
+class OtterPerceiverBlock(nn.Module): #C/single perceiver block, base for perceiver resampler class
+    def __init__(self, *, dim: int, dim_head: int = 64, heads: int = 8, mult: int = 4): #dim = input_dimension
         super().__init__()
         self.scale = dim_head**-0.5
         self.heads = heads
         inner_dim = dim_head * heads
         ff_dim = dim * mult
-        self.norm_media = nn.LayerNorm(dim)
+        """
+        C / dim is integer, input interger for Layernorm will auto normalize the last dimension of arrray
+        The dim must match last dimension of array, which is the input dimension of image feature and latent feature
+        """
+        self.norm_media = nn.LayerNorm(dim) 
         self.norm_latents = nn.LayerNorm(dim)
 
         self.to_q = nn.Linear(dim, inner_dim, bias=False)
-        self.to_kv = nn.Linear(dim, inner_dim * 2, bias=False)
+        self.to_kv = nn.Linear(dim, inner_dim * 2, bias=False) #C/concat key and value for matrix efficiency
         self.to_out = nn.Linear(inner_dim, dim, bias=False)
         self.feed_forward = nn.ModuleList(
             [
@@ -146,7 +150,7 @@ class OtterPerceiverBlock(nn.Module):
         """
         Args:
             x (torch.Tensor): image features
-                shape (b, T, n1, D)
+                shape (b, T, n1, D) C/ b = batch, T = Time, n1 = number of features, D = feature Dimension
             latent (torch.Tensor): latent features
                 shape (b, T, n2, D)
         """
@@ -158,20 +162,24 @@ class OtterPerceiverBlock(nn.Module):
 
         q = self.to_q(latents)
         kv_input = torch.cat((x, latents), dim=-2)
-        k, v = self.to_kv(kv_input).chunk(2, dim=-1)
-        q = rearrange(q, "b t n (h d) -> b h t n d", h=h)
+        k, v = self.to_kv(kv_input).chunk(2, dim=-1) # C/ split key & value after matrix calc
+        q = rearrange(q, "b t n (h d) -> b h t n d", h=h) # C/ batch head_num time feature_num feature_dimension
         k = rearrange(k, "b t n (h d) -> b h t n d", h=h)
         v = rearrange(v, "b t n (h d) -> b h t n d", h=h)
         q = q * self.scale
 
         # attention
-        sim = torch.einsum("... i d, ... j d  -> ... i j", q, k)
-        sim = sim - sim.amax(dim=-1, keepdim=True).detach()
+        sim = torch.einsum("... i d, ... j d  -> ... i j", q, k) #C/ Einstein Calc, multiply q0[n(i), d]*k0[d, n(j)] = [n(i), n(j)] for each of b h t.
+        """
+        C/ torch.amax return the max value of last n, so [b, h, t, [n,n]] -> [b, h, t, [n,1]], detach means will not do back-propgation
+        if n is very large then exp(n) will > int range, so we need to reduce every n with max_n to prevent inf condition
+        """
+        sim = sim - sim.amax(dim=-1, keepdim=True).detach() 
         attn = sim.softmax(dim=-1)
 
         out = torch.einsum("... i j, ... j d -> ... i d", attn, v)
         out = rearrange(out, "b h t n d -> b t n (h d)", h=h)
-        out = self.to_out(out) + residual_latents
+        out = self.to_out(out) + residual_latents #C/ residule connection, see original flamingo paper appendix
         residual_out = out
         for layer in self.feed_forward:
             out = layer(out)
