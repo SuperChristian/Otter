@@ -5,12 +5,14 @@ import torch.nn as nn
 from transformers.modeling_utils import PreTrainedModel
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from einops import rearrange, repeat
-from accelerate.hooks import add_hook_to_module, AlignDevicesHook
-
-from .configuration_otter import OtterConfig
+from accelerate.hooks import add_hook_to_module, AlignDevicesHook 
+"""
+C1011:Hook will update param while gradient, thus no need to store gradient parameters in GPU Memory
+"""
+from .configuration_otter import OtterConfig # C1011: import otter configuration structure without params
 
 from otter_ai.models.flamingo.falcon.modelling_RW import RWForCausalLM
-from otter_ai.models.flamingo.mpt.modeling_mpt import MPTForCausalLM
+from otter_ai.models.flamingo.mpt.modeling_mpt import MPTForCausalLM # C1011: Mosaic Pretrained Transformer 7B model 
 from otter_ai.models.flamingo.mpt_redpajama.mosaic_gpt import MosaicGPT
 
 from transformers.models.auto import AutoModel, AutoModelForCausalLM, AutoTokenizer
@@ -30,8 +32,8 @@ import torch.distributed as dist
 # Add this line at the beginning of your script or in your main function
 # dist.init_process_group(backend='nccl')
 
-XFORMERS_AVAIL = False
-XFORMERS_MSG_PRINTED = False  # Add this global variable
+XFORMERS_AVAIL = False #C1011: XFORMERS will speed up inference dedicate from Nvidia Lib
+XFORMERS_MSG_PRINTED = False  # Add this global variable #C1011: for print XFORMERS loading status
 try:
     if not XFORMERS_MSG_PRINTED:  # Check if the message has been printed before
         import xformers.ops as xops
@@ -52,7 +54,7 @@ except ImportError as e:
             XFORMERS_MSG_PRINTED = True  # Set the variable to True after printing the message
 
 # from transformers import CLIPVisionModel, LlamaForCausalLM, LlamaTokenizer
-
+# C1011: Layer name info in each of the LLMs under flamingo decoder models
 __KNOWN_DECODER_LAYERS_ATTR_NAMES = {
     "opt": "model.decoder.layers",
     "gptneo": "transformer.h",
@@ -74,7 +76,7 @@ MODEL_CLASSES = {
     "MosaicGPT": "mpt",
 }
 
-
+# C1011: Get decoder layer name from __KNOWN_DECODER_LAYERS_ATTR_NAMES ref on Model Class Name
 def _infer_decoder_layers_attr_name(model: nn.Module):
     for k in __KNOWN_DECODER_LAYERS_ATTR_NAMES:
         if k.lower() in model.__class__.__name__.lower():
@@ -84,14 +86,14 @@ def _infer_decoder_layers_attr_name(model: nn.Module):
         f"We require the attribute name for the nn.ModuleList in the decoder storing the transformer block layers. Please supply this string manually."
     )
 
-
+# C1011:using type(param1,2,3) to create a new Class containing decoder model (e.g. obj=MPT7B) and flamingo x-attention inserted (mixin)
 def extend_instance(obj, mixin):
     """Apply mixins to a class instance after creation"""
     base_cls = obj.__class__
     base_cls_name = obj.__class__.__name__
     obj.__class__ = type(base_cls_name, (mixin, base_cls), {})  # mixin needs to go first for our forward() logic to work
 
-
+# C1011: get the class.member object per name given
 def getattr_recursive(obj, att):
     """
     Return nested attribute of obj
@@ -105,7 +107,7 @@ def getattr_recursive(obj, att):
     else:
         return getattr_recursive(getattr(obj, att[:i]), att[i + 1 :])
 
-
+# C1011: assign value to class.member per given name
 def setattr_recursive(obj, att, val):
     """
     Set nested attribute of obj
@@ -119,9 +121,12 @@ def setattr_recursive(obj, att, val):
 def exists(val):
     return val is not None
 
-
+# C1011: single layer for Perceiver Resampler
 class OtterPerceiverBlock(nn.Module): #C/single perceiver block, base for perceiver resampler class
-    def __init__(self, *, dim: int, dim_head: int = 64, heads: int = 8, mult: int = 4): #dim = input_dimension
+    def __init__(self, *, dim: int, dim_head: int = 64, heads: int = 8, mult: int = 4): 
+        """
+        dim = input_dimension after CLIP process of image ??
+        """
         super().__init__()
         self.scale = dim_head**-0.5
         self.heads = heads
@@ -236,7 +241,7 @@ class OtterPerceiverResampler(nn.Module):
             latents = block(x, latents) #F*v = n1 mentioned in perceiver module
         return self.norm(latents)
 
-
+# C1011: single cross attention layer for main backbone
 class OtterMaskedCrossAttention(nn.Module):
     def __init__(
         self,
@@ -271,12 +276,12 @@ class OtterMaskedCrossAttention(nn.Module):
         """
         Args:
             x (torch.Tensor): text features
-                shape (B, T_txt, D_txt)
+                shape (B, T_txt, D_txt) # C1011: after tokenization and token embedding, Batch, Timesequence of txt emb, dimention of emb
             media (torch.Tensor): image features
-                shape (B, T_img, n, D_img) where n is the dim of the latents
-            media_locations: boolean mask identifying the media tokens in x
+                shape (B, T_img, n, D_img) where n is the dim of the latents # C1011: dim of latent is fixed per flamingo paper
+            media_locations: boolean mask identifying the media tokens in x # C1011: vector length = text_emb length, value={1:image emb, 0:txt_emb}
                 shape (B, T_txt)
-            attend_previous: bool
+            attend_previous: bool # C1011: if true, same as flamingo paper appendix. if false, txt will x-attn when T_txt < T_img
                 If false, ignores immediately preceding image and starts attending when following image
         """
         _, T_img, n = media.shape[:3]
