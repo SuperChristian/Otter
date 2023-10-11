@@ -293,14 +293,14 @@ class OtterMaskedCrossAttention(nn.Module):
         media = rearrange(media, "b t n d -> b (t n) d")
 
         k, v = self.to_kv(media).chunk(2, dim=-1)
-        if not XFORMERS_AVAIL:
+        if not XFORMERS_AVAIL: # C1011: if not using XFORMERS, we can use mask
             q = rearrange(q, "b n (h d) -> b h n d", h=h)
             k = rearrange(k, "b n (h d) -> b h n d", h=h)
             v = rearrange(v, "b n (h d) -> b h n d", h=h)
             q = q * self.scale
 
-            sim = torch.einsum("... i d, ... j d -> ... i j", q, k)
-            if exists(media_locations):
+            sim = torch.einsum("... i d, ... j d -> ... i j", q, k) # C1011: cross-attention body
+            if exists(media_locations): # C1011: if there is media location inserted
                 # at each boolean of True, increment the time counter (relative to media time)
                 text_time = media_locations.cumsum(dim=-1)
                 media_time = torch.arange(T_img, device=x.device) + 1
