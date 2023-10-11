@@ -7,7 +7,7 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from einops import rearrange, repeat
 from accelerate.hooks import add_hook_to_module, AlignDevicesHook 
 """
-C1011:Hook will update param while gradient, thus no need to store gradient parameters in GPU Memory
+C1011 - Christian comment on 10/11/2021: Hook will update param while gradient, thus no need to store gradient parameters in GPU Memory
 """
 from .configuration_otter import OtterConfig # C1011: import otter configuration structure without params
 
@@ -355,8 +355,8 @@ class OtterMaskedCrossAttention(nn.Module):
             #xops will speed up inference with less GPU memory but also less accuracy as drawback, can not use time mask?
         return self.to_out(out)
 
-
-class OtterGatedCrossAttentionBlock(nn.Module):
+# C1011: cross-attention + resnet + tanh gated, backbone module
+class OtterGatedCrossAttentionBlock(nn.Module): 
     def __init__(
         self,
         *,
@@ -410,7 +410,7 @@ class OtterGatedCrossAttentionBlock(nn.Module):
 
         return x
 
-
+# C1011: OtterLayer is single conbination layer of attn + tanh + LM decoder layer in paper, backbone will consist many of this layers.
 class OtterLayer(nn.Module):
     def __init__(self, gated_cross_attn_layer: nn.Module, decoder_layer: nn.Module):
         super().__init__()
@@ -457,7 +457,8 @@ class OtterLayer(nn.Module):
         lang_x = self.decoder_layer(lang_x, attention_mask=attention_mask, **decoder_layer_kwargs)
         return lang_x
 
-
+# C1011: backbone layer, consist all main layers after perceiver resampler and before detokenizer, 
+# C1011: LM layer is None and will be mixed with a pretained LM e.g. MPT7B = MPTForCausalLM, a Mosaic PreTrained Transformer with 7B params
 class OtterLMMixin(nn.Module):
     """
     Mixin to add cross-attention layers to a language model.
@@ -493,7 +494,7 @@ class OtterLMMixin(nn.Module):
                 else None
                 for layer_idx, _ in enumerate(self._get_decoder_layers())
             ]
-        )
+        ) # C1011: fill None for attn_layer if not want to x-attn in this section
         self._set_decoder_layers(
             nn.ModuleList(
                 [
@@ -501,12 +502,12 @@ class OtterLMMixin(nn.Module):
                     for gated_cross_attn_layer, decoder_layer in zip(gated_cross_attn_layers, self._get_decoder_layers())
                 ]
             )
-        )
+        ) # C1011: _get_decoder_layers = LM layer named transformers.blocks (aka Class MPTPreTrained in huggingface) inside Class MPTCausualLM
         self.media_token_id = media_token_id
         self.use_media_placement_augmentation = use_media_placement_augmentation
         self.initialized_otter = True
 
-    def forward(self, *input, **kwargs):
+    def forward(self, *input, **kwargs): # C1011: not reviewed yet, not study yet, pending
         """Condition the Otter layers on the media locations before forward()"""
         if not self.initialized_otter:
             raise ValueError("Otter layers are not initialized. Please call `init_otter` first.")
@@ -542,7 +543,7 @@ class OtterLMMixin(nn.Module):
             layer.condition_media_locations(None)
             layer.condition_attend_previous(None)
 
-
+# C1011: not reviewed yet, not study yet, why we need this interim class instead of direct combine to OtterModel?
 class OtterPreTrainedModel(PreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
@@ -761,18 +762,19 @@ class OtterModel(OtterPreTrainedModel):
 
 
 class OtterForConditionalGeneration(OtterPreTrainedModel):
-    config_class = OtterConfig
+    config_class = OtterConfig 
+    # C1011: need to define a config structure so PreTrainedModel can fill data in this structure, see "pretrained.docx"
 
     def __init__(
         self,
-        config: OtterConfig,
+        config: OtterConfig, # C1011: you can manualy load Otter-MPT7B-config.json file or just use otter9B model config on huggingface server, pipeline use server config
     ):
         super().__init__(config)
         ### TODO: give "LlamaForCausalLM" as the name of text_config.architectures of Llama_based flamingo
         if "llama" not in config.text_config._name_or_path:
             if config.text_config.architectures[0] == "MPTForCausalLM":
-                text_tokenizer = AutoTokenizer.from_pretrained("mosaicml/mpt-7b-instruct")
-                lang_encoder = MPTForCausalLM(config=config.text_config)
+                text_tokenizer = AutoTokenizer.from_pretrained("mosaicml/mpt-7b-instruct") # C1011: see huggingface instruction for AutoTokenizer
+                lang_encoder = MPTForCausalLM(config=config.text_config) # C1011: extract MPT7B config from Otter9B config
             elif config.text_config.architectures[0] == "MosaicGPT":
                 text_tokenizer = AutoTokenizer.from_pretrained("mosaicml/mosaic-llama-redpajama-final-candidate")
                 lang_encoder = MosaicGPT(config=config.text_config)
@@ -789,10 +791,10 @@ class OtterForConditionalGeneration(OtterPreTrainedModel):
         else:
             text_tokenizer = LlamaTokenizer.from_pretrained(config.text_config._name_or_path)
             lang_encoder = LlamaForCausalLM(config=config.text_config)
-        vision_encoder = CLIPVisionModel(config=config.vision_config)
+        vision_encoder = CLIPVisionModel(config=config.vision_config) # C1011: CLIP is mandatory for all image per paper, change to OSRT in future for robotics development
 
-        text_tokenizer.add_special_tokens({"additional_special_tokens": ["<|endofchunk|>", "<image>", "<answer>"]})
-        if text_tokenizer.pad_token is None:
+        text_tokenizer.add_special_tokens({"additional_special_tokens": ["<|endofchunk|>", "<image>", "<answer>"]}) # C1011: add robotic tokens here
+        if text_tokenizer.pad_token is None: # C1011: not study yet
             text_tokenizer.add_special_tokens({"pad_token": "<PAD>"})
         self.text_tokenizer = text_tokenizer
         self.eoc_token_id = text_tokenizer.encode("<|endofchunk|>")[-1]
@@ -829,7 +831,7 @@ class OtterForConditionalGeneration(OtterPreTrainedModel):
             use_media_placement_augmentation=self.use_media_placement_augmentation,
         )
 
-        if "lora_config" in config.__dict__:
+        if "lora_config" in config.__dict__: # C1011: LORA is based some lib, widely used in StableDiffusion, may not use here? not study yet
             original_architecture_name = self.lang_encoder.__class__.__name__
             print(f"Using LoRA with config:{config.lora_config}")
             standard_modules = ["q_proj", "v_proj"]
