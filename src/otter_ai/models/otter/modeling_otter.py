@@ -302,11 +302,15 @@ class OtterMaskedCrossAttention(nn.Module):
             sim = torch.einsum("... i d, ... j d -> ... i j", q, k) # C1011: cross-attention body
             if exists(media_locations): # C1011: if there is media location inserted
                 # at each boolean of True, increment the time counter (relative to media time)
-                text_time = media_locations.cumsum(dim=-1)
-                media_time = torch.arange(T_img, device=x.device) + 1
+                text_time = media_locations.cumsum(dim=-1) # C1011: text_time = text_seq_id, this id will +1 after an T_img, see flamingo appendix
+                media_time = torch.arange(T_img, device=x.device) + 1 # C1011: not sure what is this, maybe different images
 
-                if not attend_previous:
-                    text_time[~media_locations] += 1
+                if not attend_previous: # C1011: if txt is to attend the image come later, not come before (come before is in paper)
+                    """
+                    # C1011: Let's pick one sequence of a batch, if last txt_id is 5, the last image_id is 4, then the last txt_id will be mandatory assigned to 4, 
+                    so txt_id(text_time) cannot exceed img_id. If exceeded, txt would not join x-attn with img, see below code for reason
+                    """
+                    text_time[~media_locations] += 1 # C1011: txt_id other than img_id will +1 so can attend later inserted img
                     # make sure max is still the number of images in the sequence
                     text_time[
                         text_time
@@ -315,26 +319,30 @@ class OtterMaskedCrossAttention(nn.Module):
                             "b -> b i",
                             i=text_time.shape[1],
                         )
-                    ] = 0
-
+                    ] = 0 
+                    
                 # text time must equal media time if only attending to most immediate image
                 # otherwise, as long as text time is greater than media time (if attending to all previous images / media)
-                mask_op = torch.eq if self.only_attend_immediate_media else torch.ge
-
+                mask_op = torch.eq if self.only_attend_immediate_media else torch.ge 
+                # C1011: torch.greater_than_or_equal() return a bool tensor if matrix a >= b elementwisely 
                 text_to_media_mask = mask_op(
+                    # C1011: elementwise complement in this calculation return a mask bool                    
                     rearrange(text_time, "b i -> b 1 i 1"),
                     repeat(media_time, "j -> 1 1 1 (j n)", n=n),
-                )
-                sim = sim.masked_fill(~text_to_media_mask, -torch.finfo(sim.dtype).max)
+                ) # C1011: TRUE if txt > img, return a tensor of (b, t=1, seq i, latent_dim n * model.device j)
+                sim = sim.masked_fill(~text_to_media_mask, -torch.finfo(sim.dtype).max) #set mask type and mask_bool matrix
+                # C1011: '~' = negate/tranverse a bool, so FALSE (will x-attn) if txt >= img
 
-            sim = sim - sim.amax(dim=-1, keepdim=True).detach()
+            # C1011: all output values reduce the max result in case data overflow in exp calc, in this way max-max=0, exp(0)=1
+            sim = sim - sim.amax(dim=-1, keepdim=True).detach() 
             attn = sim.softmax(dim=-1)
 
-            if exists(media_locations) and self.only_attend_immediate_media:
+            if exists(media_locations) and self.only_attend_immediate_media: # C1011: this will change unmask condition from txt_id >=img_id to txt_id = img_id
                 # any text without a preceding media needs to have attention zeroed out
                 text_without_media_mask = text_time == 0
-                text_without_media_mask = rearrange(text_without_media_mask, "b i -> b 1 i 1")
-                attn = attn.masked_fill(text_without_media_mask, 0.0)
+                text_without_media_mask = rearrange(text_without_media_mask, "b i -> b 1 i 1") # C1011: extra mask to set 0 if txt not == img
+                attn = attn.masked_fill(text_without_media_mask, 0.0) 
+                # C1011: fill 0.0 in attn matrix when txt_id < img_id, which means txt will not attend to img far behind it in sequence
 
             out = torch.einsum("... i j, ... j d -> ... i d", attn, v)
             out = rearrange(out, "b h n d -> b n (h d)")
@@ -343,7 +351,8 @@ class OtterMaskedCrossAttention(nn.Module):
             k = rearrange(k, "b n (h d) -> b n h d", h=h)
             v = rearrange(v, "b n (h d) -> b n h d", h=h)
             attn_mask = None
-            out = xops.memory_efficient_attention(q, k, v, attn_bias=attn_mask, scale=self.scale)
+            out = xops.memory_efficient_attention(q, k, v, attn_bias=attn_mask, scale=self.scale) 
+            #xops will speed up inference with less GPU memory but also less accuracy as drawback, can not use time mask?
         return self.to_out(out)
 
 
