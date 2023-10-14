@@ -787,30 +787,30 @@ class OtterForConditionalGeneration(OtterPreTrainedModel):
             else:
                 import pdb
 
-                pdb.set_trace()
-        else:
+                pdb.set_trace() #C1014: if there is nothing match, enter Python debug mode, pdb is a debug tool.
+        else: #C1014: using LLAMA, see TODO
             text_tokenizer = LlamaTokenizer.from_pretrained(config.text_config._name_or_path)
             lang_encoder = LlamaForCausalLM(config=config.text_config)
         vision_encoder = CLIPVisionModel(config=config.vision_config) # C1011: CLIP is mandatory for all image per paper, change to OSRT in future for robotics development
 
         text_tokenizer.add_special_tokens({"additional_special_tokens": ["<|endofchunk|>", "<image>", "<answer>"]}) # C1011: add robotic tokens here
-        if text_tokenizer.pad_token is None: # C1011: not study yet
+        if text_tokenizer.pad_token is None: # C1011: <PAD> token to fill in short sentense to make it same length as long sentense in same batch 
             text_tokenizer.add_special_tokens({"pad_token": "<PAD>"})
         self.text_tokenizer = text_tokenizer
         self.eoc_token_id = text_tokenizer.encode("<|endofchunk|>")[-1]
-        self.media_token_id = text_tokenizer.encode("<image>")[-1]
+        self.media_token_id = text_tokenizer.encode("<image>")[-1] #C1014: get token id number, see mpt-7b-instruct/tokenizer.json
 
-        extend_instance(lang_encoder, OtterLMMixin)
-        decoder_layers_attr_name = _infer_decoder_layers_attr_name(lang_encoder)
+        extend_instance(lang_encoder, OtterLMMixin) #C1014: lang_encoder = original lang_encoder(mpt decoder LLM) + OtterLMMixin(tanh gated x-attn)
+        decoder_layers_attr_name = _infer_decoder_layers_attr_name(lang_encoder) #C1014: get name string: Class transformer.Class blocks()
         lang_encoder.set_decoder_layers_attr_name(decoder_layers_attr_name)
         if lang_encoder.__class__.__name__ == "LlamaForCausalLM":
             lang_encoder.resize_token_embeddings(len(text_tokenizer))
         self.lang_encoder = lang_encoder
 
-        self.cross_attn_every_n_layers = config.cross_attn_every_n_layers
+        self.cross_attn_every_n_layers = config.cross_attn_every_n_layers #C1014: in flamingo paper ablation study, n=1,2,4. Accuracy varies with n.
         # use_media_placement_augmentation is strictly false for Otter model
-        self.use_media_placement_augmentation = False  # config.use_media_placement_augmentation
-        self.max_num_frames = config.max_num_frames if hasattr(config, "max_num_frames") else None
+        self.use_media_placement_augmentation = False  # config.use_media_placement_augmentation #C1014: not study yet
+        self.max_num_frames = config.max_num_frames if hasattr(config, "max_num_frames") else None #C1014: max_frames in a single sequence?? Study
 
         # Informative print statement
         if self.max_num_frames is None or self.max_num_frames == 1:
@@ -829,7 +829,7 @@ class OtterForConditionalGeneration(OtterPreTrainedModel):
             vis_hidden_size=self.vis_dim,
             cross_attn_every_n_layers=self.cross_attn_every_n_layers,
             use_media_placement_augmentation=self.use_media_placement_augmentation,
-        )
+        ) #C1014: init_otter from method of OtterMixin
 
         if "lora_config" in config.__dict__: # C1011: LORA is based some lib, widely used in StableDiffusion, may not use here? not study yet
             original_architecture_name = self.lang_encoder.__class__.__name__
@@ -854,9 +854,9 @@ class OtterForConditionalGeneration(OtterPreTrainedModel):
             self.lang_encoder.print_trainable_parameters()
             self.lang_encoder.__class__.__name__ = f"{original_architecture_name}LoRA"
 
-        self.post_init()
+        self.post_init() #C1014: not study yet
 
-    def get_input_embeddings(self) -> nn.Module:
+    def get_input_embeddings(self) -> nn.Module: 
         return self.lang_encoder.get_input_embeddings()
 
     def set_input_embeddings(self, new_embeddings):
