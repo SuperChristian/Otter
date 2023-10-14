@@ -1033,7 +1033,7 @@ class OtterForConditionalGeneration(OtterPreTrainedModel):
             )
             add_hook_to_module(self.lang_encoder, hook)
         num_beams = generate_kwargs.get("num_beams", 1)
-        if num_beams > 1:
+        if num_beams > 1: #C1014: if using beam-search on next token inference
             vision_x = vision_x.repeat_interleave(num_beams, dim=0)
         self._encode_vision_x(vision_x=vision_x)
         output = self.lang_encoder.generate(
