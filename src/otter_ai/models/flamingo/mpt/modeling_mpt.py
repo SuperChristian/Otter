@@ -38,8 +38,8 @@ class MPTModel(MPTPreTrainedModel):
     def __init__(self, config: MPTConfig):
         config._validate_config()
         super().__init__(config)
-        self.attn_impl = config.attn_config["attn_impl"]
-        self.prefix_lm = config.attn_config["prefix_lm"]
+        self.attn_impl = config.attn_config["attn_impl"] # C1015: = "torch"
+        self.prefix_lm = config.attn_config["prefix_lm"] # C1015: = "false"
         self.attn_uses_sequence_id = config.attn_config["attn_uses_sequence_id"]
         self.alibi = config.attn_config["alibi"]
         self.alibi_bias_max = config.attn_config["alibi_bias_max"]
