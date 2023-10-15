@@ -292,7 +292,7 @@ class MPTModel(MPTPreTrainedModel):
         for b_idx, block in enumerate(self.blocks):  # type: ignore
             if output_hidden_states:
                 assert all_hidden_states is not None  # pyright
-                all_hidden_states = all_hidden_states + (x,)
+                all_hidden_states = all_hidden_states + (x,) # C1015: make a hidden state matrix from each of the layer input (layer_input = next_layer_output = hidden state)
             past_key_value = past_key_values[b_idx] if past_key_values is not None else None
             x, attn_weights, past_key_value = block(
                 x,
